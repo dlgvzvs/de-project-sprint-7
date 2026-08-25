@@ -6,13 +6,12 @@ from datetime import datetime
 master_data_base_path = '/user/master/data/'
 my_data_base_path = '/user/s25321830/data/'
 my_raw_layer_path = f'{my_data_base_path}/raw'
-my_trusted_layer_path = f'{my_data_base_path}/trusted'
 my_analytics_layer_path = f'{my_data_base_path}/analytics'
 geo_csv_path = '/user/s25321830/geo/geo.csv'
 
 spark = SparkSession.builder \
                     .appName('app_1_temp_name') \
-                    .master('local') \
+                    .master('yarn') \
                     .getOrCreate()
 
 events_with_coordinates_original = spark.read.parquet(f'{master_data_base_path}/geo/events')
@@ -90,14 +89,14 @@ home_city_research_result = home_city_research_result.withColumnRenamed('event.m
 
 data_needed_for_travel_count = users_messages.orderBy('event.message_from', 'event.datetime')
 
-data_needed_for_travel_count = data_needed_for_travel_count.groupBy('event.message_from').agg(
-    F.collect_list('city').alias('travel_array'),
-    F.size(F.collect_list('city')).alias('travel_count')
-)
-
-travel_count_result = data_needed_for_travel_count.select('event.message_from', 'travel_array', 'travel_count')
-
-travel_count_result = travel_count_result.withColumnRenamed('event.message_from', 'user_id')
+data_needed_for_travel_count = data_needed_for_travel_count \
+    .withColumn('prev_city', F.lag(F.col('city'), offset=1)) \
+    .withColumn('is_new_city', F.when( (F.col('prev_city').isNull()) | (F.col('city') != F.col('prev_city')), True ).otherwise(False)) \
+    .filter(F.col('is_new_city') == True) \
+    .groupBy(F.col('event.message_from').alias('user_id')).agg( \
+        F.collect_list('city').alias('travel_array'), \
+        F.size(F.collect_list('city')).alias('travel_count') \
+    )
 
 ranking_users_events_by_date = events_with_defined_city.withColumn('rank', F.row_number().over(window_2))
 
@@ -143,7 +142,7 @@ latest_users_events = latest_users_events.withColumn(
 
 final_users_mart_project = latest_users_messages.join(home_city_research_result, on = ['user_id'], how = 'full outer')
 
-final_users_mart_project = final_users_mart_project.join(travel_count_result, on = ['user_id'], how = 'full outer')
+final_users_mart_project = final_users_mart_project.join(data_needed_for_travel_count, on = ['user_id'], how = 'full outer')
 
 final_users_mart_project = final_users_mart_project.join(latest_users_events, on = ['user_id'], how = 'full outer')
 
@@ -151,8 +150,8 @@ final_users_mart = final_users_mart_project.select(
     F.col('user_id'),
     F.col('latest_users_messages.act_city').alias('act_city'),
     F.col('home_city_research_result.city').alias('home_city'),
-    F.col('travel_count_result.travel_array').alias('travel_array'),
-    F.col('travel_count_result.travel_count').alias('travel_count'),
+    F.col('travel_array'),
+    F.col('travel_count'),
     F.col('latest_users_events.local_time').alias('local_time')
 )
 

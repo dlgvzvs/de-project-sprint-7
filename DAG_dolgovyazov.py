@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.bash import BashOperator
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
 default_args = {
     'owner': 's25321830', 
@@ -10,31 +10,42 @@ default_args = {
     'start_date': datetime(2026, 1, 1),
 }
 
-with DAG(
+dag = DAG(
     dag_id='sprint_13_project_dolgovyazov_sergei',
     default_args=default_args,
     description='Обновление витрин Data Lake',
     schedule_interval='@daily',
-    catchup=False,
-    tags=['data_lake', 'user_mart', 'zones_mart', 'friends_mart']
-) as dag:
-
-    base_path = '/user/s25321830'
-    scripts_path = f'{base_path}/scripts'
-    
-    task_user_mart = BashOperator(
-        task_id='user_mart',
-        bash_command=f'python {scripts_path}/user_mart.py',
+    catchup=False
     )
 
-    task_zones_mart = BashOperator(
-        task_id='zones_mart',
-        bash_command=f'python {scripts_path}/zones_mart.py',
-    )
+task_users_mart = SparkSubmitOperator (
+    task_id = 'task_users_mart',
+    dag=dag,
+    application = '/user/s25321830/scripts/users_mart.py',
+    conn_id = 'yarn_spark',
+    conf={"spark.driver.maxResultSize": "2g"},
+    executor_cores = 2,
+    executor_memory = '2g'
+)
 
-    task_friends_mart = BashOperator(
-        task_id='friends_mart',
-        bash_command=f'python {scripts_path}/friends_mart.py',
-    )
+task_zones_mart = SparkSubmitOperator (
+    task_id = 'task_zones_mart',
+    dag=dag,
+    application = '/user/s25321830/scripts/zones_mart.py',
+    conn_id = 'yarn_spark',
+    conf={"spark.driver.maxResultSize": "2g"},
+    executor_cores = 2,
+    executor_memory = '2g'
+)
 
-    task_user_mart >> task_zones_mart >> task_friends_mart
+task_friends_mart = SparkSubmitOperator (
+    task_id = 'task_friends_mart',
+    dag=dag,
+    application = '/user/s25321830/scripts/friends_mart.py',
+    conn_id = 'yarn_spark',
+    conf={"spark.driver.maxResultSize": "2g"},
+    executor_cores = 2,
+    executor_memory = '2g'
+)
+
+[task_users_mart, task_zones_mart] >> task_friends_mart
